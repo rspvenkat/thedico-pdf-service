@@ -1,19 +1,65 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
+const path = require('path');
+const os = require('os');
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
+// ── Helper: find Chrome executable ──────────────────────────
+function getChromePath() {
+  // 1. Explicit env variable
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  // 2. Render.com cache path
+  const renderPath = '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome';
+  try {
+    require('fs').accessSync(renderPath);
+    return renderPath;
+  } catch (e) {}
+
+  // 3. Try puppeteer built-in executablePath
+  try {
+    return puppeteer.executablePath();
+  } catch (e) {}
+
+  // 4. Common Linux paths
+  const linuxPaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium'
+  ];
+  for (const p of linuxPaths) {
+    try {
+      require('fs').accessSync(p);
+      return p;
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+// ── Routes ───────────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({
     service: 'Thedico PDF Service',
     status: 'running',
-    version: '1.0.0'
+    version: '2.0.0',
+    chromePath: getChromePath() || 'not found'
   });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const chromePath = getChromePath();
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    chromePath: chromePath || 'not found',
+    chromeFound: !!chromePath
+  });
 });
 
 app.post('/generate-pdf', async (req, res) => {
@@ -23,32 +69,38 @@ app.post('/generate-pdf', async (req, res) => {
     return res.status(400).json({ error: 'html is required' });
   }
 
+  const chromePath = getChromePath();
+  console.log(`🔍 Using Chrome: ${chromePath}`);
+
+  if (!chromePath) {
+    return res.status(500).json({
+      error: 'Chrome not found. Run: npx puppeteer browsers install chrome'
+    });
+  }
+
   let browser;
   try {
-    const launchOptions = {
+    browser = await puppeteer.launch({
+      executablePath: chromePath,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--single-process',
-        '--no-zygote'
+        '--no-zygote',
+        '--disable-extensions',
+        '--disable-software-rasterizer'
       ],
-      headless: 'new'
-    };
-
-    // Use env variable if set (Render.com)
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    }
-
-    browser = await puppeteer.launch(launchOptions);
+      headless: 'new',
+      timeout: 30000
+    });
 
     const page = await browser.newPage();
 
     await page.setViewport({ width: 1280, height: 900 });
 
-    // Block unnecessary resources
+    // Block media to speed up
     await page.setRequestInterception(true);
     page.on('request', (request) => {
       if (request.resourceType() === 'media') {
@@ -63,7 +115,7 @@ app.post('/generate-pdf', async (req, res) => {
       timeout: 60000
     });
 
-    // Wait for charts and fonts
+    // Wait for Chart.js + Google Fonts
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     const pdf = await page.pdf({
@@ -101,4 +153,5 @@ app.post('/generate-pdf', async (req, res) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Thedico PDF Service running on port ${PORT}`);
+  console.log(`Chrome path: ${getChromePath() || 'not found'}`);
 });
