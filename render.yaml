@@ -3,12 +3,14 @@ services:
     name: thedico-pdf-service
     env: node
     plan: free
-    buildCommand: npm install && npx puppeteer browsers install chrome
+    buildCommand: npm install && node node_modules/puppeteer/install.mjs
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: PUPPETEER_CACHE_DIR
         value: /opt/render/.cache/puppeteer
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome
     healthCheckPath: /health
     autoDeploy: true
