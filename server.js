@@ -1,75 +1,50 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
-
 const app = express();
+
 app.use(express.json({ limit: '20mb' }));
 
-// ─── Health Check ───────────────────────────────────────────
 app.get('/', (req, res) => {
-  res.json({
-    service: 'Thedico PDF Service',
-    status: 'running',
-    version: '1.0.0',
-    endpoints: {
-      health: 'GET /health',
-      generatePdf: 'POST /generate-pdf'
-    }
-  });
+  res.json({ service: 'Thedico PDF Service', status: 'running' });
 });
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ─── PDF Generation ─────────────────────────────────────────
 app.post('/generate-pdf', async (req, res) => {
   const { html, filename, options } = req.body;
 
   if (!html) {
-    return res.status(400).json({ error: 'html field is required' });
+    return res.status(400).json({ error: 'html is required' });
   }
 
   let browser;
   try {
+    // Download browser if not exists
+    const { executablePath } = require('puppeteer');
+
     browser = await puppeteer.launch({
+      executablePath: executablePath(),
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--window-size=1280,900'
+        '--disable-gpu'
       ],
       headless: 'new'
     });
 
     const page = await browser.newPage();
-
-    // Set viewport
     await page.setViewport({ width: 1280, height: 900 });
-
-    // Block unnecessary resources to speed up
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-      const type = request.resourceType();
-      if (type === 'media') {
-        request.abort();
-      } else {
-        request.continue();
-      }
-    });
-
-    // Load HTML content
     await page.setContent(html, {
       waitUntil: 'networkidle0',
       timeout: 60000
     });
 
-    // Wait for Chart.js + Google Fonts to fully render
     await new Promise(resolve => setTimeout(resolve, 3000));
 
-    // PDF options
-    const pdfOptions = {
+    const pdf = await page.pdf({
       format: options?.format || 'A4',
       printBackground: true,
       margin: {
@@ -78,45 +53,25 @@ app.post('/generate-pdf', async (req, res) => {
         left: options?.marginLeft || '10mm',
         right: options?.marginRight || '10mm'
       }
-    };
+    });
 
-    const pdf = await page.pdf(pdfOptions);
-
-    const name = filename || `Thedico_Report_${Date.now()}.pdf`;
+    const name = filename || `Report_${Date.now()}.pdf`;
 
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${name}"`,
-      'Content-Length': pdf.length,
-      'Access-Control-Allow-Origin': '*'
+      'Content-Length': pdf.length
     });
 
     res.send(pdf);
 
-    console.log(`✅ PDF generated: ${name} (${pdf.length} bytes)`);
-
   } catch (err) {
-    console.error('❌ PDF generation error:', err.message);
-    res.status(500).json({
-      error: err.message,
-      hint: 'Check if HTML is valid and external resources are accessible'
-    });
+    console.error('PDF error:', err.message);
+    res.status(500).json({ error: err.message });
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    if (browser) await browser.close();
   }
 });
 
-// ─── Start Server ────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`
-  ╔═══════════════════════════════════════╗
-  ║   Thedico PDF Service — Running       ║
-  ║   Port: ${PORT}                          ║
-  ║   Health: GET /health                 ║
-  ║   PDF:    POST /generate-pdf          ║
-  ╚═══════════════════════════════════════╝
-  `);
-});
+app.listen(PORT, () => console.log(`Thedico PDF Service running on port ${PORT}`));
