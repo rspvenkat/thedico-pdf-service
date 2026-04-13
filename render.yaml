@@ -3,7 +3,7 @@ services:
     name: thedico-pdf-service
     env: node
     plan: free
-    buildCommand: npm install && node node_modules/puppeteer/install.mjs
+    buildCommand: npm install && npx puppeteer browsers install chrome
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
